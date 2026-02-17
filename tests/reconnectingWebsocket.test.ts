@@ -641,23 +641,27 @@ describe("ReconnectingWebSocketRpcSession", () => {
             closeEvents.push(event);
         });
 
-        const rpc = await session.getRPC();
-        expect(await rpc.square(2)).toBe(4);
-        expect(acceptedConnectionCount).toBe(1);
+        try {
+            const rpc = await session.getRPC();
+            expect(await rpc.square(2)).toBe(4);
+            expect(acceptedConnectionCount).toBe(1);
 
-        session.stop(new Error("manual stop for test"));
-        await waitFor(() => closeEvents.length > 0);
-        expect(closeEvents[closeEvents.length - 1].intentional).toBe(true);
+            session.stop(new Error("manual stop for test"));
+            await waitFor(() => closeEvents.length > 0);
+            expect(closeEvents[closeEvents.length - 1].intentional).toBe(true);
 
-        for (const socket of sockets) {
-            socket.close(1012, "forced disconnect after stop");
+            for (const socket of sockets) {
+                socket.close(1012, "forced disconnect after stop");
+            }
+
+            await new Promise<void>(resolve => setTimeout(resolve, 50));
+            expect(acceptedConnectionCount).toBe(1);
+            const restartedRpc = await session.start();
+            expect(await restartedRpc.square(5)).toBe(25);
+            await waitFor(() => acceptedConnectionCount >= 2);
+        } finally {
+            session.stop();
         }
-
-        await new Promise<void>(resolve => setTimeout(resolve, 50));
-        expect(acceptedConnectionCount).toBe(1);
-        const restartedRpc = await session.start();
-        expect(await restartedRpc.square(5)).toBe(25);
-        await waitFor(() => acceptedConnectionCount >= 2);
     });
 
     it("returns stop reason when stopped while waiting to retry", async () => {
