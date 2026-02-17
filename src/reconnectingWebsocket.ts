@@ -5,32 +5,55 @@ type DisposableRpcStub = { [Symbol.dispose](): void, onRpcBroken(callback: (erro
 type RpcShape<T> = T extends object ? { [K in keyof T]: any } : Record<string, any>;
 export type DynamicRpcStub = DisposableRpcStub & Record<string, any>;
 export type ReconnectingWebSocketRpc<T = Record<string, never>> = RpcShape<T> & DisposableRpcStub;
-type WebSocketSource = { createWebSocket: () => WebSocket | Promise<WebSocket> };
+type WebSocketSource = {
+    /**
+     * Return a brand-new socket for each connection attempt.
+     *
+     * @example
+     * createWebSocket: () => new WebSocket("wss://api.example.com/rpc")
+     */
+    createWebSocket: () => WebSocket | Promise<WebSocket>,
+};
 
 export type ReconnectingWebSocketRpcOpenEvent<T = Record<string, never>> = {
+    /** Monotonic connection id for this session instance. */
     connectionId: number,
+    /** True only for the first successful connection open. */
     firstConnection: boolean,
+    /** Ready RPC stub bound to this opened connection. */
     rpc: ReconnectingWebSocketRpc<T>,
 };
 
 export type ReconnectingWebSocketRpcCloseEvent = {
+    /** Connection id from the matching open event. */
     connectionId: number,
+    /** Original disconnect error/cause. */
     error: unknown,
+    /** True when closed by `stop()`. */
     intentional: boolean,
+    /** True only if this connection reached fully-open state. */
     wasConnected: boolean,
 };
 
 export type ReconnectingWebSocketRpcReconnectOptions = {
+    /** Enable or disable automatic reconnect (default: true). */
     enabled?: boolean,
+    /** First retry delay in ms (default: 250). */
     delayMs?: number,
+    /** Maximum retry delay in ms (default: 5000). */
     maxDelayMs?: number,
+    /** Multiplier applied after each failed attempt (default: 2). */
     backoffFactor?: number,
 };
 
 export type ReconnectingWebSocketRpcSessionOptions<T = Record<string, never>> = WebSocketSource & {
+    /** Local capnweb RPC target exposed to the remote peer. */
     localMain?: any,
+    /** Options forwarded to `newWebSocketRpcSession`. */
     rpcSessionOptions?: RpcSessionOptions,
+    /** Reconnect/backoff configuration. */
     reconnectOptions?: ReconnectingWebSocketRpcReconnectOptions,
+    /** Runs once after the first successful socket open, before onOpen is emitted. */
     onFirstInit?: (rpc: ReconnectingWebSocketRpc<T>) => MaybePromise<void>,
 };
 
@@ -57,6 +80,7 @@ class ConnectionAttemptCancelledError extends Error {
     }
 }
 
+/** Reconnecting wrapper around capnweb WebSocket RPC sessions. */
 export class ReconnectingWebSocketRpcSession<T = Record<string, never>> {
     #connectPromise?: Promise<ReconnectingWebSocketRpc<T>>;
     #activeConnection?: ActiveConnection<T>;
@@ -96,15 +120,18 @@ export class ReconnectingWebSocketRpcSession<T = Record<string, never>> {
         });
     }
 
+    /** True when `stop()` has been called and reconnecting is disabled. */
     get isStopped(): boolean {
         return !this.#started;
     }
 
+    /** True when a fully-open RPC connection is currently available. */
     get isConnected(): boolean {
         const connection = this.#activeConnection;
         return connection !== undefined && connection.opened && !connection.closed;
     }
 
+    /** Listen for each successful connection open. Returns an unsubscribe function. */
     onOpen(listener: OpenListener<T>): () => void {
         this.#openListeners.add(listener);
 
@@ -119,22 +146,26 @@ export class ReconnectingWebSocketRpcSession<T = Record<string, never>> {
         return () => this.#openListeners.delete(listener);
     }
 
+    /** Listen for each opened connection close. Returns an unsubscribe function. */
     onClose(listener: CloseListener): () => void {
         this.#closeListeners.add(listener);
         return () => this.#closeListeners.delete(listener);
     }
 
+    /** Returns a live RPC stub, starting or reconnecting if needed. */
     async getRPC(): Promise<ReconnectingWebSocketRpc<T>> {
         const connection = this.#activeConnection;
         if (connection && connection.opened && !connection.closed) return connection.rpc;
         return this.start();
     }
 
+    /** Starts (or resumes) connection attempts and resolves when ready. */
     async start(): Promise<ReconnectingWebSocketRpc<T>> {
         this.#started = true;
         return this.#ensureConnected();
     }
 
+    /** Stops reconnecting and closes the active connection, if any. */
     stop(reason: unknown = new Error("RPC session was stopped by the application.")): void {
         this.#stopReason = reason;
         this.#started = false;
