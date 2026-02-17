@@ -140,6 +140,7 @@ export class ReconnectingWebSocketRpcSession<T = Record<string, never>> {
         this.#started = false;
         this.#lifecycleToken++;
         this.#interruptRetryDelay();
+        this.#nextReconnectDelayMs = this.#reconnectDelayMs;
         const connection = this.#activeConnection;
         if (connection) this.#disconnectConnection(connection, reason, true);
         this.#connectPromise = undefined;

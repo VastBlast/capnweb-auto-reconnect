@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import http from "node:http";
 import { WebSocket as NodeWebSocket, WebSocketServer } from "ws";
 import { newWebSocketRpcSession } from "capnweb";
@@ -677,6 +677,54 @@ describe("ReconnectingWebSocketRpcSession", () => {
 
         await expect(pending).rejects.toThrow("manual stop while retrying");
         expect(attempts).toBe(1);
+    });
+
+    it("resets retry backoff after a manual stop/start", async () => {
+        vi.useFakeTimers();
+        let firstStart: Promise<void> | undefined;
+        let secondStart: Promise<void> | undefined;
+        let attempts = 0;
+        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+            createWebSocket: () => {
+                attempts++;
+                throw new Error("always fail");
+            },
+            reconnectOptions: { delayMs: 100, maxDelayMs: 400, backoffFactor: 2 },
+        });
+
+        const trackedStart = () => session.start().then(
+            () => { throw new Error("start() unexpectedly resolved"); },
+            () => { },
+        );
+
+        try {
+            // Prevent constructor auto-start from affecting this assertion sequence.
+            session.stop(new Error("pause auto-start"));
+
+            firstStart = trackedStart();
+            await Promise.resolve();
+            expect(attempts).toBe(1);
+
+            await vi.advanceTimersByTimeAsync(100);
+            expect(attempts).toBe(2);
+
+            await vi.advanceTimersByTimeAsync(200);
+            expect(attempts).toBe(3);
+
+            session.stop(new Error("manual restart"));
+
+            secondStart = trackedStart();
+            await Promise.resolve();
+            expect(attempts).toBe(4);
+
+            await vi.advanceTimersByTimeAsync(100);
+            expect(attempts).toBe(5);
+        } finally {
+            session.stop(new Error("end test"));
+            if (firstStart) await firstStart;
+            if (secondStart) await secondStart;
+            vi.useRealTimers();
+        }
     });
 
     it("does not auto-reconnect after disconnect when reconnect=false", async () => {
