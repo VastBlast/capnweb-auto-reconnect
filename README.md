@@ -1,2 +1,1 @@
-# capnweb-partysocket
-
+# capnweb-auto-reconnect
