@@ -5,6 +5,7 @@ type DisposableRpcStub = { [Symbol.dispose](): void, onRpcBroken(callback: (erro
 type RpcShape<T> = T extends object ? { [K in keyof T]: any } : Record<string, any>;
 export type DynamicRpcStub = DisposableRpcStub & Record<string, any>;
 export type ReconnectingWebSocketRpc<T = Record<string, never>> = RpcShape<T> & DisposableRpcStub;
+export type ReconnectingWebSocketRpcPromise<T = Record<string, never>> = ReconnectingWebSocketRpc<T> & Promise<ReconnectingWebSocketRpc<T>>;
 type WebSocketSource = {
     /**
      * Return a brand-new socket for each connection attempt.
@@ -73,6 +74,61 @@ type ActiveConnection<T> = {
 const READY_STATE_OPEN = 1;
 const READY_STATE_CLOSING = 2;
 const READY_STATE_CLOSED = 3;
+const PROMISE_TO_STRING_TAG = "Promise";
+const PROMISE_TO_STRING_VALUE = "[object Promise]";
+
+type RpcPipelineState = {
+    value: unknown,
+    receiver: unknown,
+};
+
+function createRpcPipeline<T>(promise: Promise<ReconnectingWebSocketRpc<T>>): ReconnectingWebSocketRpcPromise<T> {
+    // Promise<rpc> can't pipeline property/method access; this proxy defers those operations
+    // until the RPC is ready so `await session.getRPC().method()` works naturally.
+    const makePipelineProxy = (statePromise: Promise<RpcPipelineState>): ReconnectingWebSocketRpcPromise<T> => {
+        const resolveValue = () => statePromise.then(state => state.value);
+        const promiseLikeToString = () => PROMISE_TO_STRING_VALUE;
+        const promiseLikeValueOf = function valueOf(this: unknown) { return this; };
+        const promiseLikeToPrimitive = (hint: string) => hint === "number" ? Number.NaN : PROMISE_TO_STRING_VALUE;
+        const proxyTarget = () => { };
+        return new Proxy(proxyTarget, {
+            get(_target, property) {
+                if (property === "then") {
+                    return (onFulfilled?: (value: unknown) => unknown, onRejected?: (reason: unknown) => unknown) =>
+                        resolveValue().then(onFulfilled, onRejected);
+                }
+                if (property === "catch") {
+                    return (onRejected?: (reason: unknown) => unknown) => resolveValue().catch(onRejected);
+                }
+                if (property === "finally") {
+                    return (onFinally?: (() => void) | null) => resolveValue().finally(onFinally ?? undefined);
+                }
+                if (property === Symbol.toPrimitive) return promiseLikeToPrimitive;
+                if (property === "toString") return promiseLikeToString;
+                if (property === "valueOf") return promiseLikeValueOf;
+                if (property === Symbol.toStringTag) return PROMISE_TO_STRING_TAG;
+
+                return makePipelineProxy(statePromise.then(state => ({
+                    // Keep values wrapped in state objects so intermediate capnweb RpcPromises
+                    // are not flattened by native Promise thenable assimilation.
+                    value: (state.value as any)[property],
+                    receiver: state.value,
+                })));
+            },
+            apply(_target, _thisArg, args) {
+                return makePipelineProxy(statePromise.then(state => {
+                    if (typeof state.value !== "function") throw new TypeError("RPC pipeline target is not callable.");
+                    return {
+                        value: Reflect.apply(state.value, state.receiver as any, args),
+                        receiver: undefined,
+                    };
+                }));
+            },
+        }) as unknown as ReconnectingWebSocketRpcPromise<T>;
+    };
+
+    return makePipelineProxy(promise.then(value => ({ value, receiver: undefined })));
+}
 
 class ConnectionAttemptCancelledError extends Error {
     constructor() {
@@ -152,11 +208,9 @@ export class ReconnectingWebSocketRpcSession<T = Record<string, never>> {
         return () => this.#closeListeners.delete(listener);
     }
 
-    /** Returns a live RPC stub, starting or reconnecting if needed. */
-    async getRPC(): Promise<ReconnectingWebSocketRpc<T>> {
-        const connection = this.#activeConnection;
-        if (connection && connection.opened && !connection.closed) return connection.rpc;
-        return this.start();
+    /** Returns a pipelined RPC handle, starting or reconnecting if needed. */
+    getRPC(): ReconnectingWebSocketRpcPromise<T> {
+        return createRpcPipeline(this.start());
     }
 
     /** Starts (or resumes) connection attempts and resolves when ready. */

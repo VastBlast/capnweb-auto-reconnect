@@ -283,6 +283,151 @@ describe("ReconnectingWebSocketRpcSession", () => {
         }
     });
 
+    it("supports promise-pipelined getRPC() calls", async () => {
+        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+            createWebSocket: () => createTestWebSocket(),
+            ...fastReconnectOptions,
+        });
+
+        try {
+            expect(await session.getRPC().square(12)).toBe(144);
+            expect(acceptedConnectionCount).toBe(1);
+        } finally {
+            session.stop();
+        }
+    });
+
+    it("supports multiple pipelined calls from a single unresolved getRPC handle", async () => {
+        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+            createWebSocket: () => createTestWebSocket(),
+            ...fastReconnectOptions,
+        });
+
+        try {
+            const rpc = session.getRPC();
+            const [left, right] = await Promise.all([rpc.square(3), rpc.square(4)]);
+            expect(left).toBe(9);
+            expect(right).toBe(16);
+            expect(acceptedConnectionCount).toBe(1);
+        } finally {
+            session.stop();
+        }
+    });
+
+    it("behaves like a promise when passed to Promise.resolve()", async () => {
+        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+            createWebSocket: () => createTestWebSocket(),
+            ...fastReconnectOptions,
+        });
+
+        try {
+            const resolved = await Promise.resolve(session.getRPC());
+            const started = await session.start();
+            expect(resolved).toBe(started);
+            expect(await resolved.square(6)).toBe(36);
+        } finally {
+            session.stop();
+        }
+    });
+
+    it("supports primitive coercion without triggering pipelined call rejections", async () => {
+        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+            createWebSocket: () => createTestWebSocket(),
+            ...fastReconnectOptions,
+        });
+        const unhandledRejections: unknown[] = [];
+        const onUnhandledRejection = (reason: unknown) => {
+            unhandledRejections.push(reason);
+        };
+        process.on("unhandledRejection", onUnhandledRejection);
+
+        try {
+            const pipelinedRpc = session.getRPC();
+            const stringify = (value: any) => String(value);
+            const interpolate = (value: any) => `${value}`;
+            const toNumber = (value: any) => Number(value);
+            const rawPipelinedRpc: any = pipelinedRpc;
+
+            expect(stringify(pipelinedRpc)).toBe("[object Promise]");
+            expect(interpolate(pipelinedRpc)).toBe("[object Promise]");
+            expect(toNumber(pipelinedRpc)).toBeNaN();
+            expect(rawPipelinedRpc.toString()).toBe("[object Promise]");
+            expect(rawPipelinedRpc.valueOf()).toBe(pipelinedRpc);
+
+            const rpc = await pipelinedRpc;
+            expect(await rpc.square(6)).toBe(36);
+
+            await new Promise<void>(resolve => setTimeout(resolve, 0));
+            expect(unhandledRejections).toStrictEqual([]);
+        } finally {
+            process.off("unhandledRejection", onUnhandledRejection);
+            session.stop();
+        }
+    });
+
+    it("supports pipelined property reads", async () => {
+        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+            createWebSocket: () => createTestWebSocket(),
+            ...fastReconnectOptions,
+        });
+
+        try {
+            expect(await session.getRPC().makeCounter(9).value).toBe(9);
+        } finally {
+            session.stop();
+        }
+    });
+
+    it("supports catch/finally on pipelined getRPC call failures", async () => {
+        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+            createWebSocket: () => createTestWebSocket(),
+            ...fastReconnectOptions,
+        });
+        let finallyCalled = false;
+
+        try {
+            const message = await session.getRPC().throwError()
+                .catch((error: unknown) => error instanceof Error ? error.message : String(error))
+                .finally(() => {
+                    finallyCalled = true;
+                });
+
+            expect(message).toContain("test error");
+            expect(finallyCalled).toBe(true);
+        } finally {
+            session.stop();
+        }
+    });
+
+    it("still returns the live stub when awaiting getRPC()", async () => {
+        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+            createWebSocket: () => createTestWebSocket(),
+            ...fastReconnectOptions,
+        });
+
+        try {
+            const fromAwait = await session.getRPC();
+            const fromStart = await session.start();
+            expect(fromAwait).toBe(fromStart);
+            expect(await fromAwait.square(5)).toBe(25);
+        } finally {
+            session.stop();
+        }
+    });
+
+    it("preserves pipelining through RPC promises returned by methods", async () => {
+        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+            createWebSocket: () => createTestWebSocket(),
+            ...fastReconnectOptions,
+        });
+
+        try {
+            expect(await session.getRPC().makeCounter(4).increment(3)).toBe(7);
+        } finally {
+            session.stop();
+        }
+    });
+
     it("calls onOpen immediately if listener is added after already connected", async () => {
         let resolveOpened: (() => void) | undefined;
         const opened = new Promise<void>(resolve => {
@@ -397,6 +542,44 @@ describe("ReconnectingWebSocketRpcSession", () => {
 
             const rpc = await pendingRpc;
             expect(await rpc.square(26)).toBe(676);
+        } finally {
+            if (resolveInit) resolveInit();
+            session.stop();
+        }
+    });
+
+    it("keeps pipelined getRPC() calls pending while onFirstOpen is still running", async () => {
+        let initStarted = false;
+        let resolveInit: (() => void) | undefined;
+        const initGate = new Promise<void>(resolve => {
+            resolveInit = resolve;
+        });
+        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+            createWebSocket: () => createTestWebSocket(),
+            ...fastReconnectOptions,
+            onFirstOpen: async () => {
+                initStarted = true;
+                await initGate;
+            },
+        });
+        let callSettled = false;
+
+        try {
+            await waitFor(() => initStarted);
+            const pendingCall = session.getRPC().square(28).then((value: number) => {
+                callSettled = true;
+                return value;
+            }, (error: unknown) => {
+                callSettled = true;
+                throw error;
+            });
+
+            await new Promise<void>(resolve => setTimeout(resolve, 30));
+            expect(callSettled).toBe(false);
+
+            if (resolveInit) resolveInit();
+
+            expect(await pendingCall).toBe(784);
         } finally {
             if (resolveInit) resolveInit();
             session.stop();
@@ -758,6 +941,25 @@ describe("ReconnectingWebSocketRpcSession", () => {
         session.stop(new Error("manual stop while retrying"));
 
         await expect(pending).rejects.toThrow("manual stop while retrying");
+        expect(attempts).toBe(1);
+    });
+
+    it("rejects pipelined getRPC calls with stop reason when stopped while retrying", async () => {
+        let attempts = 0;
+        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+            createWebSocket: () => {
+                attempts++;
+                throw new Error("always fail while retrying");
+            },
+            reconnectOptions: { delayMs: 500, maxDelayMs: 500 },
+        });
+
+        const pending = session.getRPC().square(3);
+        await waitFor(() => attempts >= 1);
+
+        session.stop(new Error("manual stop while pipelined getRPC call is pending"));
+
+        await expect(pending).rejects.toThrow("manual stop while pipelined getRPC call is pending");
         expect(attempts).toBe(1);
     });
 

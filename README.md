@@ -27,11 +27,14 @@ const session = new ReconnectingWebSocketRpcSession<MyApi>({
     createWebSocket: () => new WebSocket("wss://example.com/rpc"),
 });
 
-const rpc = await session.getRPC();
-console.log(await rpc.square(12)); // 144
+// Preferred for one-off calls: no double-await needed (promise-pipelining):
+const squared = await session.getRPC().square(12);
+console.log(squared); // 144
 
-// with this pattern, it will use the same connection if still open, or reconnect if it got disconnected:
-console.log(await (await session.getRPC()).square(12)); // 144
+// If you want to reuse the same live stub in this scope, await it once:
+const rpc = await session.getRPC();
+console.log(await rpc.square(3)); // 9
+console.log(await rpc.square(4)); // 16
 ```
 
 ## What it does
@@ -85,6 +88,6 @@ await rpc.ping?.();
 
 ## API notes
 
-- `getRPC()` returns a live stub, connecting/reconnecting as needed.
+- `getRPC()` returns a promise-pipelined RPC handle, connecting/reconnecting as needed.
 - `start()` resumes connection attempts if you previously called `stop()`.
 - `stop(reason?)` closes the current connection and pauses reconnecting.
