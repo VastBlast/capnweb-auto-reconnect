@@ -364,6 +364,84 @@ describe("ReconnectingWebSocketRpcSession", () => {
         }
     });
 
+    it("keeps getRPC() pending while onFirstOpen is still running", async () => {
+        let initStarted = false;
+        let resolveInit: (() => void) | undefined;
+        const initGate = new Promise<void>(resolve => {
+            resolveInit = resolve;
+        });
+        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+            createWebSocket: () => createTestWebSocket(),
+            ...fastReconnectOptions,
+            onFirstOpen: async () => {
+                initStarted = true;
+                await initGate;
+            },
+        });
+        let rpcSettled = false;
+
+        try {
+            await waitFor(() => initStarted);
+            const pendingRpc = session.getRPC().then(rpc => {
+                rpcSettled = true;
+                return rpc;
+            }, error => {
+                rpcSettled = true;
+                throw error;
+            });
+
+            await new Promise<void>(resolve => setTimeout(resolve, 30));
+            expect(rpcSettled).toBe(false);
+
+            if (resolveInit) resolveInit();
+
+            const rpc = await pendingRpc;
+            expect(await rpc.square(26)).toBe(676);
+        } finally {
+            if (resolveInit) resolveInit();
+            session.stop();
+        }
+    });
+
+    it("keeps start() pending while onFirstOpen is still running", async () => {
+        let initStarted = false;
+        let resolveInit: (() => void) | undefined;
+        const initGate = new Promise<void>(resolve => {
+            resolveInit = resolve;
+        });
+        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+            createWebSocket: () => createTestWebSocket(),
+            ...fastReconnectOptions,
+            onFirstOpen: async () => {
+                initStarted = true;
+                await initGate;
+            },
+        });
+        let startSettled = false;
+
+        try {
+            await waitFor(() => initStarted);
+            const pendingStart = session.start().then(rpc => {
+                startSettled = true;
+                return rpc;
+            }, error => {
+                startSettled = true;
+                throw error;
+            });
+
+            await new Promise<void>(resolve => setTimeout(resolve, 30));
+            expect(startSettled).toBe(false);
+
+            if (resolveInit) resolveInit();
+
+            const rpc = await pendingStart;
+            expect(await rpc.square(27)).toBe(729);
+        } finally {
+            if (resolveInit) resolveInit();
+            session.stop();
+        }
+    });
+
     it("deduplicates concurrent getRPC calls", async () => {
         const session = new ReconnectingWebSocketRpcSession<TestTarget>({
             createWebSocket: () => createTestWebSocket(),
