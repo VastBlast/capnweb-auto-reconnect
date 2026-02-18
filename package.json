@@ -1,6 +1,6 @@
 {
   "name": "capnweb-auto-reconnect",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Reconnecting WebSocket RPC session support for capnweb.",
   "scripts": {
     "build": "tsdown",
