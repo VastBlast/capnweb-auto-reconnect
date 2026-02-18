@@ -331,7 +331,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
         }
     });
 
-    it("does not call onOpen until onFirstInit completes", async () => {
+    it("does not call onOpen until onFirstOpen completes", async () => {
         let initStarted = false;
         let resolveInit: (() => void) | undefined;
         const initGate = new Promise<void>(resolve => {
@@ -341,7 +341,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
         const session = new ReconnectingWebSocketRpcSession<TestTarget>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
-            onFirstInit: async () => {
+            onFirstOpen: async () => {
                 initStarted = true;
                 await initGate;
             },
@@ -459,14 +459,14 @@ describe("ReconnectingWebSocketRpcSession", () => {
         }
     });
 
-    it("calls onFirstInit exactly once", async () => {
-        let firstInitCalls = 0;
+    it("calls onFirstOpen exactly once", async () => {
+        let firstOpenCalls = 0;
 
         const session = new ReconnectingWebSocketRpcSession<TestTarget>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
-            onFirstInit: async rpc => {
-                firstInitCalls++;
+            onFirstOpen: async rpc => {
+                firstOpenCalls++;
                 expect(await rpc.square(3)).toBe(9);
             },
         });
@@ -478,21 +478,21 @@ describe("ReconnectingWebSocketRpcSession", () => {
             const rpc2 = await session.getRPC();
             expect(rpc2).toBe(rpc1);
             expect(await rpc2.square(7)).toBe(49);
-            expect(firstInitCalls).toBe(1);
+            expect(firstOpenCalls).toBe(1);
         } finally {
             session.stop();
         }
     });
 
-    it("retries first initialization when onFirstInit fails transiently", async () => {
-        let firstInitCalls = 0;
+    it("retries first-open hook when onFirstOpen fails transiently", async () => {
+        let firstOpenCalls = 0;
         const session = new ReconnectingWebSocketRpcSession<TestTarget>({
             createWebSocket: () => createTestWebSocket(),
             ...immediateReconnectOptions,
-            onFirstInit: async rpc => {
-                firstInitCalls++;
-                if (firstInitCalls === 1) {
-                    throw new Error("transient first init failure");
+            onFirstOpen: async rpc => {
+                firstOpenCalls++;
+                if (firstOpenCalls === 1) {
+                    throw new Error("transient first-open failure");
                 }
                 expect(await rpc.square(30)).toBe(900);
             },
@@ -501,7 +501,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
         try {
             const rpc = await session.getRPC();
             expect(await rpc.square(31)).toBe(961);
-            expect(firstInitCalls).toBe(2);
+            expect(firstOpenCalls).toBe(2);
             expect(acceptedConnectionCount).toBeGreaterThanOrEqual(2);
         } finally {
             session.stop();
@@ -971,7 +971,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
         const session = new ReconnectingWebSocketRpcSession<TestTarget>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
-            onFirstInit: async () => {
+            onFirstOpen: async () => {
                 await new Promise<void>(resolve => setTimeout(resolve, 20));
             },
         });

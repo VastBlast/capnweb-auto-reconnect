@@ -54,7 +54,7 @@ export type ReconnectingWebSocketRpcSessionOptions<T = Record<string, never>> = 
     /** Reconnect/backoff configuration. */
     reconnectOptions?: ReconnectingWebSocketRpcReconnectOptions,
     /** Runs once after the first successful socket open, before onOpen is emitted. */
-    onFirstInit?: (rpc: ReconnectingWebSocketRpc<T>) => MaybePromise<void>,
+    onFirstOpen?: (rpc: ReconnectingWebSocketRpc<T>) => MaybePromise<void>,
 };
 
 type OpenListener<T> = (event: ReconnectingWebSocketRpcOpenEvent<T>) => MaybePromise<void>;
@@ -88,7 +88,7 @@ export class ReconnectingWebSocketRpcSession<T = Record<string, never>> {
     #lifecycleToken = 0;
     #started = false;
     #stopReason: unknown = new Error("RPC session stopped.");
-    #firstInitDone = false;
+    #firstOpenDone = false;
     #openedConnectionCount = 0;
     #retryDelayWait?: { timer: ReturnType<typeof setTimeout>, resolve: () => void };
     readonly #openListeners = new Set<OpenListener<T>>();
@@ -250,9 +250,9 @@ export class ReconnectingWebSocketRpcSession<T = Record<string, never>> {
             if (connection.closed) throw new Error("WebSocket connection closed while opening.");
             throwIfCancelled();
 
-            if (!this.#firstInitDone && this.options.onFirstInit) {
-                await this.options.onFirstInit(connection.rpc);
-                this.#firstInitDone = true;
+            if (!this.#firstOpenDone && this.options.onFirstOpen) {
+                await this.options.onFirstOpen(connection.rpc);
+                this.#firstOpenDone = true;
             }
 
             if (connection.closed) throw new Error("WebSocket connection closed during initialization.");
@@ -404,4 +404,3 @@ export class ReconnectingWebSocketRpcSession<T = Record<string, never>> {
         } catch { }
     }
 }
-

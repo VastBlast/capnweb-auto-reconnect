@@ -29,6 +29,9 @@ const session = new ReconnectingWebSocketRpcSession<MyApi>({
 
 const rpc = await session.getRPC();
 console.log(await rpc.square(12)); // 144
+
+// with this pattern, it will use the same connection if still open, or reconnect if it got disconnected:
+console.log(await (await session.getRPC()).square(12)); // 144
 ```
 
 ## What it does
@@ -36,7 +39,7 @@ console.log(await rpc.square(12)); // 144
 - Keeps a capnweb RPC session connected over WebSocket.
 - Automatically reconnects after disconnects (configurable delay, max delay, and backoff factor).
 - Emits connection lifecycle hooks with connection IDs (`onOpen`/`onClose`).
-- Runs optional one-time startup logic with `onFirstInit` before the first open event.
+- Runs optional one-time startup logic with `onFirstOpen` before the first open event.
 - Deduplicates concurrent `start()`/`getRPC()` calls while connecting.
 - Lets you pause/resume reconnecting with `stop()` and `start()`.
 
@@ -46,9 +49,9 @@ console.log(await rpc.square(12)); // 144
 const session = new ReconnectingWebSocketRpcSession({
     createWebSocket: () => new WebSocket("wss://example.com/rpc"),
     reconnectOptions: { delayMs: 250, maxDelayMs: 5000, backoffFactor: 2 },
-    onFirstInit: async rpc => {
-        // Runs once after first successful open.
-        await rpc.warmup?.();
+    onFirstOpen: async rpc => {
+        // Runs once after first successful open (every time it reconnects)
+        await rpc.someWarmupFunction();
     },
 });
 
