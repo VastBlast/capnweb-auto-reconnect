@@ -31,7 +31,7 @@
     "ws": "^8.19.0"
   },
   "dependencies": {
-    "capnweb": "^0.4.0"
+    "capnweb": "^0.5.0"
   },
   "files": [
     "dist"
