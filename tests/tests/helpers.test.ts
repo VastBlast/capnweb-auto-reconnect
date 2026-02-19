@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { closeEventToError, toError } from "../src/helpers.js";
+import { closeEventToError, toError } from "../../src/helpers.js";
 
 describe("helpers", () => {
     it("formats close event errors with a reason", () => {

@@ -6,7 +6,7 @@ import { TestTarget } from "./testUtil.js";
 import {
     ReconnectingWebSocketRpcSession,
     type ReconnectingWebSocketRpcCloseEvent,
-} from "../src/index.js";
+} from "../../src/index.js";
 
 let httpServer: http.Server;
 let wsServer: WebSocketServer;
