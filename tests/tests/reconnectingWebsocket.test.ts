@@ -8,6 +8,8 @@ import {
     type ReconnectingWebSocketRpcCloseEvent,
 } from "../../src/index.js";
 
+type TestRpcApi = Pick<TestTarget, "square" | "throwError" | "makeCounter">;
+
 let httpServer: http.Server;
 let wsServer: WebSocketServer;
 let wsUrl = "";
@@ -144,11 +146,11 @@ describe("ReconnectingWebSocketRpcSession", () => {
         { reconnectOptions: { backoffFactor: 0.9 }, message: "reconnectOptions.backoffFactor" },
         { reconnectOptions: { backoffFactor: Number.POSITIVE_INFINITY }, message: "reconnectOptions.backoffFactor" },
     ])("validates reconnect options: $message", ({ reconnectOptions, message }) => {
-        expect(() => new ReconnectingWebSocketRpcSession<TestTarget>({ createWebSocket: () => createTestWebSocket(), reconnectOptions })).toThrow(message);
+        expect(() => new ReconnectingWebSocketRpcSession<TestRpcApi>({ createWebSocket: () => createTestWebSocket(), reconnectOptions })).toThrow(message);
     });
 
     it("tracks isStopped and isConnected across start/stop lifecycle", async () => {
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
         });
@@ -177,7 +179,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
 
     it("retries when createWebSocket returns a rejected promise", async () => {
         let attempts = 0;
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => {
                 attempts++;
                 if (attempts < 3) return Promise.reject(new Error(`temporary rejection ${attempts}`));
@@ -198,7 +200,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
 
     it("returns stop reason for a pending start() when stopped during retries", async () => {
         let attempts = 0;
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => {
                 attempts++;
                 throw new Error("always fail while start() is pending");
@@ -217,7 +219,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
 
     it("returns string stop reason for a pending start() when stopped during retries", async () => {
         let attempts = 0;
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => {
                 attempts++;
                 throw new Error("always fail while start() is pending");
@@ -236,7 +238,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
 
     it("uses fallback stop reason for a pending start() when stop reason is not an Error/string", async () => {
         let attempts = 0;
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => {
                 attempts++;
                 throw new Error("always fail while start() is pending");
@@ -259,7 +261,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
             resolveOpened = resolve;
         });
         const values: number[] = [];
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
         });
@@ -284,7 +286,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
     });
 
     it("supports promise-pipelined getRPC() calls", async () => {
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
         });
@@ -298,7 +300,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
     });
 
     it("supports multiple pipelined calls from a single unresolved getRPC handle", async () => {
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
         });
@@ -315,7 +317,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
     });
 
     it("behaves like a promise when passed to Promise.resolve()", async () => {
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
         });
@@ -331,7 +333,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
     });
 
     it("supports primitive coercion without triggering pipelined call rejections", async () => {
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
         });
@@ -366,7 +368,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
     });
 
     it("supports pipelined property reads", async () => {
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
         });
@@ -379,7 +381,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
     });
 
     it("supports catch/finally on pipelined getRPC call failures", async () => {
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
         });
@@ -400,7 +402,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
     });
 
     it("still returns the live stub when awaiting getRPC()", async () => {
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
         });
@@ -416,7 +418,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
     });
 
     it("preserves pipelining through RPC promises returned by methods", async () => {
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
         });
@@ -433,7 +435,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
         const opened = new Promise<void>(resolve => {
             resolveOpened = resolve;
         });
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
         });
@@ -457,8 +459,54 @@ describe("ReconnectingWebSocketRpcSession", () => {
         }
     });
 
+    it("deduplicates repeated onOpen registrations for the same callback", async () => {
+        const openConnectionIds: number[] = [];
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
+            createWebSocket: () => createTestWebSocket(),
+            ...fastReconnectOptions,
+        });
+        const onOpen = (event: { connectionId: number }) => {
+            openConnectionIds.push(event.connectionId);
+        };
+        const off1 = session.onOpen(onOpen);
+        const off2 = session.onOpen(onOpen);
+        let off3 = () => { };
+
+        try {
+            let rpc = await session.getRPC();
+            expect(await rpc.square(34)).toBe(1156);
+            expect(openConnectionIds).toStrictEqual([1]);
+            off3 = session.onOpen(onOpen);
+            expect(openConnectionIds).toStrictEqual([1]);
+
+            for (const socket of sockets) {
+                socket.close(1012, "forced reconnect for onOpen dedupe");
+            }
+            await waitFor(() => acceptedConnectionCount >= 2);
+
+            rpc = await session.getRPC();
+            expect(await rpc.square(35)).toBe(1225);
+            expect(openConnectionIds).toStrictEqual([1, 2]);
+
+            off1();
+            for (const socket of sockets) {
+                socket.close(1012, "forced reconnect after onOpen off");
+            }
+            await waitFor(() => acceptedConnectionCount >= 3);
+
+            rpc = await session.getRPC();
+            expect(await rpc.square(36)).toBe(1296);
+            expect(openConnectionIds).toStrictEqual([1, 2]);
+        } finally {
+            off1();
+            off2();
+            off3();
+            session.stop();
+        }
+    });
+
     it("does not auto-start if stopped before constructor microtask runs", async () => {
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
         });
@@ -483,7 +531,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
             resolveInit = resolve;
         });
         let openCalls = 0;
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
             onFirstOpen: async () => {
@@ -515,7 +563,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
         const initGate = new Promise<void>(resolve => {
             resolveInit = resolve;
         });
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
             onFirstOpen: async () => {
@@ -554,7 +602,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
         const initGate = new Promise<void>(resolve => {
             resolveInit = resolve;
         });
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
             onFirstOpen: async () => {
@@ -592,7 +640,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
         const initGate = new Promise<void>(resolve => {
             resolveInit = resolve;
         });
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
             onFirstOpen: async () => {
@@ -626,7 +674,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
     });
 
     it("deduplicates concurrent getRPC calls", async () => {
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
         });
@@ -644,7 +692,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
 
     it("supports an async createWebSocket factory", async () => {
         let factoryCalls = 0;
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: async () => {
                 factoryCalls++;
                 await new Promise<void>(resolve => setTimeout(resolve, 5));
@@ -665,7 +713,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
 
     it("retries connection creation failures until success", async () => {
         let attempts = 0;
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => {
                 attempts++;
                 if (attempts < 3) {
@@ -688,7 +736,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
 
     it("does not retry initial connection when reconnect=false", async () => {
         let attempts = 0;
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => {
                 attempts++;
                 throw new Error("always fails");
@@ -702,7 +750,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
 
     it("resolves when socket opens between state check and open-listener registration", async () => {
         const fakeSocket = new RaceyOpenWebSocket();
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => fakeSocket as unknown as WebSocket,
             ...noReconnectOptions,
         });
@@ -723,7 +771,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
     it("calls onFirstOpen exactly once", async () => {
         let firstOpenCalls = 0;
 
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
             onFirstOpen: async rpc => {
@@ -747,7 +795,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
 
     it("retries first-open hook when onFirstOpen fails transiently", async () => {
         let firstOpenCalls = 0;
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...immediateReconnectOptions,
             onFirstOpen: async rpc => {
@@ -775,7 +823,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
             resolveOpenListener = resolve;
         });
 
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
         });
@@ -798,7 +846,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
     });
 
     it("keeps connection alive when onOpen listener throws", async () => {
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
         });
@@ -819,7 +867,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
         const closeEvents: ReconnectingWebSocketRpcCloseEvent[] = [];
         const openConnectionIds: number[] = [];
 
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
         });
@@ -865,7 +913,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
     });
 
     it("keeps reconnect behavior when onClose listeners throw or reject", async () => {
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
         });
@@ -894,7 +942,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
 
     it("stops reconnecting after stop() and can start again", async () => {
         const closeEvents: ReconnectingWebSocketRpcCloseEvent[] = [];
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
         });
@@ -927,7 +975,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
 
     it("returns stop reason when stopped while waiting to retry", async () => {
         let attempts = 0;
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => {
                 attempts++;
                 throw new Error("always fail while retrying");
@@ -946,7 +994,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
 
     it("rejects pipelined getRPC calls with stop reason when stopped while retrying", async () => {
         let attempts = 0;
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => {
                 attempts++;
                 throw new Error("always fail while retrying");
@@ -968,7 +1016,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
         let firstStart: Promise<void> | undefined;
         let secondStart: Promise<void> | undefined;
         let attempts = 0;
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => {
                 attempts++;
                 throw new Error("always fail");
@@ -1014,7 +1062,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
     it("does not auto-reconnect after disconnect when reconnect=false", async () => {
         const closeEvents: ReconnectingWebSocketRpcCloseEvent[] = [];
         const openConnectionIds: number[] = [];
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...noReconnectImmediateOptions,
         });
@@ -1069,7 +1117,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
 
     it("marks only the first open event as firstConnection", async () => {
         const flags: boolean[] = [];
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
         });
@@ -1100,7 +1148,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
     it("retries if the connection closes during onOpen hooks", async () => {
         let openCalls = 0;
         const firstConnectionFlags: boolean[] = [];
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
         });
@@ -1132,7 +1180,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
     it("can stop then start while initial connection attempt is still in-flight", async () => {
         let resolveFirstAttempt: ((socket: WebSocket) => void) | undefined;
         let createCalls = 0;
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => {
                 createCalls++;
                 if (createCalls === 1) {
@@ -1165,7 +1213,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
         let resolveFirstAttempt: ((socket: WebSocket) => void) | undefined;
         let createCalls = 0;
         const openConnectionIds: number[] = [];
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => {
                 createCalls++;
                 if (createCalls === 1) {
@@ -1199,7 +1247,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
     });
 
     it("does not reconnect when start() is called on an already connected session", async () => {
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
         });
@@ -1222,7 +1270,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
 
     it("stop() is idempotent and emits intentional close once", async () => {
         const closeEvents: ReconnectingWebSocketRpcCloseEvent[] = [];
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
         });
@@ -1248,7 +1296,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
         const openIds: number[] = [];
         const closeIds: number[] = [];
 
-        const session = new ReconnectingWebSocketRpcSession<TestTarget>({
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
             createWebSocket: () => createTestWebSocket(),
             ...fastReconnectOptions,
             onFirstOpen: async () => {

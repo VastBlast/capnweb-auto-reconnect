@@ -1,11 +1,17 @@
-import { newWebSocketRpcSession, type RpcSessionOptions } from "capnweb";
+import {
+    newWebSocketRpcSession,
+    type RpcCompatible,
+    type RpcSessionOptions,
+    type RpcStub,
+} from "capnweb";
 import { closeEventToError, MaybePromise, toError } from "./helpers.js";
 
-type DisposableRpcStub = { [Symbol.dispose](): void, onRpcBroken(callback: (error: unknown) => void): void };
-type RpcShape<T> = T extends object ? { [K in keyof T]: any } : Record<string, any>;
-export type DynamicRpcStub = DisposableRpcStub & Record<string, any>;
-export type ReconnectingWebSocketRpc<T = Record<string, never>> = RpcShape<T> & DisposableRpcStub;
-export type ReconnectingWebSocketRpcPromise<T = Record<string, never>> = ReconnectingWebSocketRpc<T> & Promise<ReconnectingWebSocketRpc<T>>;
+interface Empty { }
+
+type RpcMain<T> = T extends RpcCompatible<T> ? T : never;
+
+export type ReconnectingWebSocketRpc<T = Empty> = RpcStub<RpcMain<T>>;
+export type ReconnectingWebSocketRpcPromise<T = Empty> = RpcStub<RpcMain<T>> & Promise<RpcStub<RpcMain<T>>>;
 type WebSocketSource = {
     /**
      * Return a brand-new socket for each connection attempt.
@@ -16,13 +22,13 @@ type WebSocketSource = {
     createWebSocket: () => WebSocket | Promise<WebSocket>,
 };
 
-export type ReconnectingWebSocketRpcOpenEvent<T = Record<string, never>> = {
+export type ReconnectingWebSocketRpcOpenEvent<T = Empty> = {
     /** Monotonic connection id for this session instance. */
     connectionId: number,
     /** True only for the first successful connection open. */
     firstConnection: boolean,
     /** Ready RPC stub bound to this opened connection. */
-    rpc: ReconnectingWebSocketRpc<T>,
+    rpc: RpcStub<RpcMain<T>>,
 };
 
 export type ReconnectingWebSocketRpcCloseEvent = {
@@ -47,7 +53,7 @@ export type ReconnectingWebSocketRpcReconnectOptions = {
     backoffFactor?: number,
 };
 
-export type ReconnectingWebSocketRpcSessionOptions<T = Record<string, never>> = WebSocketSource & {
+export type ReconnectingWebSocketRpcSessionOptions<T = Empty> = WebSocketSource & {
     /** Local capnweb RPC target exposed to the remote peer. */
     localMain?: any,
     /** Options forwarded to `newWebSocketRpcSession`. */
@@ -55,16 +61,25 @@ export type ReconnectingWebSocketRpcSessionOptions<T = Record<string, never>> = 
     /** Reconnect/backoff configuration. */
     reconnectOptions?: ReconnectingWebSocketRpcReconnectOptions,
     /** Runs once after the first successful socket open, before onOpen is emitted. */
-    onFirstOpen?: (rpc: ReconnectingWebSocketRpc<T>) => MaybePromise<void>,
+    onFirstOpen?: (rpc: RpcStub<RpcMain<T>>) => MaybePromise<void>,
 };
 
 type OpenListener<T> = (event: ReconnectingWebSocketRpcOpenEvent<T>) => MaybePromise<void>;
 type CloseListener = (event: ReconnectingWebSocketRpcCloseEvent) => MaybePromise<void>;
+type OpenEventInternal = {
+    connectionId: number,
+    firstConnection: boolean,
+    rpc: unknown,
+};
+type RpcLifecycleStub = {
+    [Symbol.dispose](): void,
+    onRpcBroken(callback: (error: unknown) => void): void,
+};
 
-type ActiveConnection<T> = {
+type ActiveConnection = {
     id: number,
     webSocket: WebSocket,
-    rpc: ReconnectingWebSocketRpc<T>,
+    rpc: unknown,
     firstConnection: boolean,
     opened: boolean,
     closed: boolean,
@@ -82,10 +97,19 @@ type RpcPipelineState = {
     receiver: unknown,
 };
 
-function createRpcPipeline<T>(promise: Promise<ReconnectingWebSocketRpc<T>>): ReconnectingWebSocketRpcPromise<T> {
+function runListenerSafely(listener: () => MaybePromise<void>): void {
+    try {
+        const result = listener();
+        if (result && typeof (result as PromiseLike<void>).then === "function") {
+            void (result as PromiseLike<void>).then(undefined, () => { });
+        }
+    } catch { }
+}
+
+function createRpcPipeline(promise: Promise<unknown>): unknown {
     // Promise<rpc> can't pipeline property/method access; this proxy defers those operations
     // until the RPC is ready so `await session.getRPC().method()` works naturally.
-    const makePipelineProxy = (statePromise: Promise<RpcPipelineState>): ReconnectingWebSocketRpcPromise<T> => {
+    const makePipelineProxy = (statePromise: Promise<RpcPipelineState>): unknown => {
         const resolveValue = () => statePromise.then(state => state.value);
         const promiseLikeToString = () => PROMISE_TO_STRING_VALUE;
         const promiseLikeValueOf = function valueOf(this: unknown) { return this; };
@@ -124,10 +148,10 @@ function createRpcPipeline<T>(promise: Promise<ReconnectingWebSocketRpc<T>>): Re
                     };
                 }));
             },
-        }) as unknown as ReconnectingWebSocketRpcPromise<T>;
+        }) as unknown;
     };
 
-    return makePipelineProxy(promise.then(value => ({ value, receiver: undefined })));
+    return makePipelineProxy(promise.then<RpcPipelineState>(value => ({ value: value as unknown, receiver: undefined })));
 }
 
 class ConnectionAttemptCancelledError extends Error {
@@ -137,9 +161,9 @@ class ConnectionAttemptCancelledError extends Error {
 }
 
 /** Reconnecting wrapper around capnweb WebSocket RPC sessions. */
-export class ReconnectingWebSocketRpcSession<T = Record<string, never>> {
-    #connectPromise?: Promise<ReconnectingWebSocketRpc<T>>;
-    #activeConnection?: ActiveConnection<T>;
+export class ReconnectingWebSocketRpcSession<T = Empty> {
+    #connectPromise?: Promise<unknown>;
+    #activeConnection?: ActiveConnection;
     #connectionId = 0;
     #lifecycleToken = 0;
     #started = false;
@@ -189,14 +213,17 @@ export class ReconnectingWebSocketRpcSession<T = Record<string, never>> {
 
     /** Listen for each successful connection open. Returns an unsubscribe function. */
     onOpen(listener: OpenListener<T>): () => void {
+        const hadListener = this.#openListeners.has(listener);
         this.#openListeners.add(listener);
 
         const connection = this.#activeConnection;
-        if (connection && connection.opened && !connection.closed) {
-            const event = { connectionId: connection.id, firstConnection: connection.firstConnection, rpc: connection.rpc };
-            try {
-                Promise.resolve(listener(event)).catch(() => { });
-            } catch { }
+        if (!hadListener && connection && connection.opened && !connection.closed) {
+            const event: OpenEventInternal = {
+                connectionId: connection.id,
+                firstConnection: connection.firstConnection,
+                rpc: connection.rpc as unknown,
+            };
+            runListenerSafely(() => listener(event as ReconnectingWebSocketRpcOpenEvent<T>));
         }
 
         return () => this.#openListeners.delete(listener);
@@ -209,12 +236,12 @@ export class ReconnectingWebSocketRpcSession<T = Record<string, never>> {
     }
 
     /** Returns a pipelined RPC handle, starting or reconnecting if needed. */
-    getRPC(): ReconnectingWebSocketRpcPromise<T> {
-        return createRpcPipeline(this.start());
+    getRPC(): RpcStub<RpcMain<T>> & Promise<RpcStub<RpcMain<T>>> {
+        return createRpcPipeline(this.start()) as RpcStub<RpcMain<T>> & Promise<RpcStub<RpcMain<T>>>;
     }
 
     /** Starts (or resumes) connection attempts and resolves when ready. */
-    async start(): Promise<ReconnectingWebSocketRpc<T>> {
+    start(): Promise<RpcStub<RpcMain<T>>> {
         this.#started = true;
         return this.#ensureConnected();
     }
@@ -231,10 +258,10 @@ export class ReconnectingWebSocketRpcSession<T = Record<string, never>> {
         this.#connectPromise = undefined;
     }
 
-    #ensureConnected(): Promise<ReconnectingWebSocketRpc<T>> {
+    #ensureConnected(): Promise<RpcStub<RpcMain<T>>> {
         const connection = this.#activeConnection;
-        if (connection && connection.opened && !connection.closed) return Promise.resolve(connection.rpc);
-        if (this.#connectPromise) return this.#connectPromise;
+        if (connection && connection.opened && !connection.closed) return Promise.resolve(connection.rpc as unknown) as Promise<RpcStub<RpcMain<T>>>;
+        if (this.#connectPromise) return this.#connectPromise as Promise<RpcStub<RpcMain<T>>>;
 
         const token = this.#lifecycleToken;
         const promise = this.#connectUntilReady(token);
@@ -244,10 +271,10 @@ export class ReconnectingWebSocketRpcSession<T = Record<string, never>> {
         // The identity check avoids clearing a newer attempt from an older settled promise.
         const clearConnectPromise = () => { if (this.#connectPromise === promise) this.#connectPromise = undefined; };
         promise.then(clearConnectPromise, clearConnectPromise);
-        return promise;
+        return promise as Promise<RpcStub<RpcMain<T>>>;
     }
 
-    async #connectUntilReady(token: number): Promise<ReconnectingWebSocketRpc<T>> {
+    async #connectUntilReady(token: number): Promise<unknown> {
         while (true) {
             if (!this.#started) throw toError(this.#stopReason, "RPC session is stopped.");
             // Any stop() bumps this token and cancels prior in-flight attempts.
@@ -282,14 +309,14 @@ export class ReconnectingWebSocketRpcSession<T = Record<string, never>> {
         }
     }
 
-    async #connectOnce(token: number): Promise<ReconnectingWebSocketRpc<T>> {
+    async #connectOnce(token: number): Promise<unknown> {
         const webSocket = await this.#createWebSocket();
         if (!this.#started || token !== this.#lifecycleToken) {
             this.#closeWebSocket(webSocket, "Connection attempt was replaced.");
             throw new ConnectionAttemptCancelledError();
         }
 
-        const rpc = newWebSocketRpcSession(webSocket, this.options.localMain, this.options.rpcSessionOptions) as unknown as ReconnectingWebSocketRpc<T>;
+        const rpc = newWebSocketRpcSession<RpcMain<T>>(webSocket, this.options.localMain, this.options.rpcSessionOptions) as unknown;
         const connection = this.#installConnection(webSocket, rpc);
         this.#activeConnection = connection;
         const throwIfCancelled = () => {
@@ -305,7 +332,7 @@ export class ReconnectingWebSocketRpcSession<T = Record<string, never>> {
             throwIfCancelled();
 
             if (!this.#firstOpenDone && this.options.onFirstOpen) {
-                await this.options.onFirstOpen(connection.rpc);
+                await this.options.onFirstOpen(connection.rpc as RpcStub<RpcMain<T>>);
                 this.#firstOpenDone = true;
             }
 
@@ -317,7 +344,11 @@ export class ReconnectingWebSocketRpcSession<T = Record<string, never>> {
             connection.firstConnection = this.#openedConnectionCount === 0;
             this.#openedConnectionCount++;
             // Open listeners are non-blocking; they can kick off background subscription setup.
-            this.#emitOpen({ connectionId: connection.id, firstConnection: connection.firstConnection, rpc: connection.rpc });
+            this.#emitOpen({
+                connectionId: connection.id,
+                firstConnection: connection.firstConnection,
+                rpc: connection.rpc,
+            });
 
             if (connection.closed) throw new Error("WebSocket connection closed during open listeners.");
             throwIfCancelled();
@@ -328,8 +359,8 @@ export class ReconnectingWebSocketRpcSession<T = Record<string, never>> {
         }
     }
 
-    #installConnection(webSocket: WebSocket, rpc: ReconnectingWebSocketRpc<T>): ActiveConnection<T> {
-        const connection: ActiveConnection<T> = { id: ++this.#connectionId, webSocket, rpc, firstConnection: false, opened: false, closed: false, removeTransportListeners: () => { } };
+    #installConnection(webSocket: WebSocket, rpc: unknown): ActiveConnection {
+        const connection: ActiveConnection = { id: ++this.#connectionId, webSocket, rpc, firstConnection: false, opened: false, closed: false, removeTransportListeners: () => { } };
         const closeListener = (event: CloseEvent) => this.#disconnectConnection(connection, closeEventToError(event), false);
         const errorListener = () => this.#disconnectConnection(connection, new Error("WebSocket connection failed."), false);
 
@@ -339,11 +370,11 @@ export class ReconnectingWebSocketRpcSession<T = Record<string, never>> {
             webSocket.removeEventListener("close", closeListener);
             webSocket.removeEventListener("error", errorListener);
         };
-        rpc.onRpcBroken(error => this.#disconnectConnection(connection, error, false));
+        (rpc as RpcLifecycleStub).onRpcBroken(error => this.#disconnectConnection(connection, error, false));
         return connection;
     }
 
-    #disconnectConnection(connection: ActiveConnection<T>, error: unknown, intentional: boolean) {
+    #disconnectConnection(connection: ActiveConnection, error: unknown, intentional: boolean) {
         if (connection.closed) return;
         connection.closed = true;
         connection.removeTransportListeners();
@@ -352,7 +383,7 @@ export class ReconnectingWebSocketRpcSession<T = Record<string, never>> {
 
         this.#closeWebSocket(connection.webSocket, "RPC session reconnecting.");
         try {
-            connection.rpc[Symbol.dispose]();
+            (connection.rpc as RpcLifecycleStub)[Symbol.dispose]();
         } catch { }
 
         // onClose is a lifecycle signal (one close per opened connection), not a per-attempt failure signal.
@@ -361,20 +392,16 @@ export class ReconnectingWebSocketRpcSession<T = Record<string, never>> {
         if (wasConnected && !intentional && this.#started && this.#reconnect) void this.#ensureConnected().catch(() => { });
     }
 
-    #emitOpen(event: ReconnectingWebSocketRpcOpenEvent<T>): void {
+    #emitOpen(event: OpenEventInternal): void {
         for (const listener of this.#openListeners) {
-            try {
-                // Listener failures should not bring down a healthy connection.
-                Promise.resolve(listener(event)).catch(() => { });
-            } catch { }
+            // Listener failures should not bring down a healthy connection.
+            runListenerSafely(() => listener(event as ReconnectingWebSocketRpcOpenEvent<T>));
         }
     }
 
     #emitClose(event: ReconnectingWebSocketRpcCloseEvent): void {
         for (const listener of this.#closeListeners) {
-            try {
-                Promise.resolve(listener(event)).catch(() => { });
-            } catch { }
+            runListenerSafely(() => listener(event));
         }
     }
 
