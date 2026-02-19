@@ -49,7 +49,7 @@ console.log(await rpc.square(4)); // 16
 ## Example: lifecycle hooks
 
 ```ts
-const session = new ReconnectingWebSocketRpcSession({
+const session = new ReconnectingWebSocketRpcSession<SomeApi>({
     createWebSocket: () => new WebSocket("wss://example.com/rpc"),
     reconnectOptions: { delayMs: 250, maxDelayMs: 5000, backoffFactor: 2 },
     onFirstOpen: async rpc => {
@@ -78,12 +78,12 @@ session.stop("app shutdown");
 import { WebSocket } from "ws";
 import { ReconnectingWebSocketRpcSession } from "capnweb-auto-reconnect";
 
-const session = new ReconnectingWebSocketRpcSession({
+const session = new ReconnectingWebSocketRpcSession<SomeApi>({
     createWebSocket: () => new WebSocket("ws://127.0.0.1:8787"),
 });
 
 const rpc = await session.start();
-await rpc.ping?.();
+await rpc.ping();
 ```
 
 ## API notes
