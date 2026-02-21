@@ -10,8 +10,10 @@ I built this for my personal projects and decided to publish it in case anyone e
 ## Install
 
 ```bash
-npm i capnweb-auto-reconnect
+npm i capnweb capnweb-auto-reconnect
 ```
+
+`capnweb-auto-reconnect` uses `capnweb` as a peer dependency.
 
 ## Quick start
 
