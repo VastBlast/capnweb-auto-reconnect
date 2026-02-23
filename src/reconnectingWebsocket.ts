@@ -178,6 +178,8 @@ export class ReconnectingWebSocketRpcSession<T = Empty> {
     readonly #reconnectDelayMaxMs: number;
     readonly #reconnectBackoffFactor: number;
     #nextReconnectDelayMs: number;
+    #lastConnectAttemptStartedAtMs?: number;
+    #delayUntilNextAttemptMs = 0;
 
     constructor(readonly options: ReconnectingWebSocketRpcSessionOptions<T>) {
         const reconnectOptions = options.reconnectOptions;
@@ -253,6 +255,8 @@ export class ReconnectingWebSocketRpcSession<T = Empty> {
         this.#lifecycleToken++;
         this.#interruptRetryDelay();
         this.#nextReconnectDelayMs = this.#reconnectDelayMs;
+        this.#lastConnectAttemptStartedAtMs = undefined;
+        this.#delayUntilNextAttemptMs = 0;
         const connection = this.#activeConnection;
         if (connection) this.#disconnectConnection(connection, reason, true);
         this.#connectPromise = undefined;
@@ -279,6 +283,10 @@ export class ReconnectingWebSocketRpcSession<T = Empty> {
             if (!this.#started) throw toError(this.#stopReason, "RPC session is stopped.");
             // Any stop() bumps this token and cancels prior in-flight attempts.
             if (token !== this.#lifecycleToken) throw new ConnectionAttemptCancelledError();
+            const waitForNextAttempt = this.#waitForNextAttempt(token);
+            if (waitForNextAttempt) await waitForNextAttempt;
+            this.#delayUntilNextAttemptMs = 0;
+            this.#lastConnectAttemptStartedAtMs = Date.now();
 
             try {
                 const rpc = await this.#connectOnce(token);
@@ -290,21 +298,16 @@ export class ReconnectingWebSocketRpcSession<T = Empty> {
                 if (!activeConnection || activeConnection.closed || activeConnection.rpc !== rpc) throw new Error("Connection became unavailable before it was returned.");
 
                 this.#nextReconnectDelayMs = this.#reconnectDelayMs;
+                this.#delayUntilNextAttemptMs = this.#reconnect ? this.#reconnectDelayMs : 0;
                 return rpc;
             } catch (err) {
                 if (!this.#started) throw toError(this.#stopReason, "RPC session is stopped.");
+                if (token !== this.#lifecycleToken) throw new ConnectionAttemptCancelledError();
                 if (err instanceof ConnectionAttemptCancelledError) throw err;
                 if (!this.#reconnect) throw err;
 
-                const delay = this.#nextReconnectDelayMs;
+                this.#delayUntilNextAttemptMs = this.#nextReconnectDelayMs;
                 this.#nextReconnectDelayMs = Math.min(this.#reconnectDelayMaxMs, Math.ceil(this.#nextReconnectDelayMs * this.#reconnectBackoffFactor));
-
-                try {
-                    await this.#waitForRetryDelay(delay, token);
-                } catch (waitError) {
-                    if (!this.#started) throw toError(this.#stopReason, "RPC session is stopped.");
-                    throw waitError;
-                }
             }
         }
     }
@@ -444,6 +447,22 @@ export class ReconnectingWebSocketRpcSession<T = Empty> {
                 cleanup();
                 reject(new Error("WebSocket is already closed."));
             }
+        });
+    }
+
+    #waitForNextAttempt(token: number): Promise<void> | undefined {
+        if (!this.#started) throw toError(this.#stopReason, "RPC session is stopped.");
+        if (token !== this.#lifecycleToken) throw new ConnectionAttemptCancelledError();
+        if (this.#delayUntilNextAttemptMs <= 0 || this.#lastConnectAttemptStartedAtMs === undefined) return;
+
+        const elapsedMs = Date.now() - this.#lastConnectAttemptStartedAtMs;
+        const waitMs = Math.max(0, this.#delayUntilNextAttemptMs - elapsedMs);
+        if (waitMs <= 0) return;
+
+        return this.#waitForRetryDelay(waitMs, token).catch(waitError => {
+            if (!this.#started) throw toError(this.#stopReason, "RPC session is stopped.");
+            if (token !== this.#lifecycleToken) throw new ConnectionAttemptCancelledError();
+            throw waitError;
         });
     }
 

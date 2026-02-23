@@ -88,6 +88,18 @@ async function waitFor(condition: () => boolean, timeoutMs = 2000): Promise<void
     }
 }
 
+async function stopSessionUsingFakeTimers(
+    session: ReconnectingWebSocketRpcSession<TestRpcApi>,
+    ...pendingStarts: Array<Promise<void> | undefined>
+): Promise<void> {
+    session.stop(new Error("end test"));
+    await vi.runOnlyPendingTimersAsync();
+    for (const pendingStart of pendingStarts) {
+        if (pendingStart) await pendingStart;
+    }
+    vi.useRealTimers();
+}
+
 class RaceyOpenWebSocket extends EventTarget {
     #readyState = 0; // CONNECTING
     #readCount = 0;
@@ -253,6 +265,32 @@ describe("ReconnectingWebSocketRpcSession", () => {
 
         await expect(pendingStart).rejects.toThrow("RPC session is stopped.");
         expect(attempts).toBe(1);
+    });
+
+    it("returns stop reason for a pending start() when stopped during an in-flight createWebSocket", async () => {
+        vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout", "performance"] });
+        let pendingStart: Promise<unknown> | undefined;
+        let pendingStartSettled: Promise<void> | undefined;
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
+            createWebSocket: () => new Promise<WebSocket>(resolve => {
+                setTimeout(() => resolve(new NeverOpenWebSocket() as unknown as WebSocket), 50);
+            }),
+            reconnectOptions: { delayMs: 0, maxDelayMs: 0 },
+        });
+
+        try {
+            session.stop(new Error("pause auto-start"));
+            pendingStart = session.start();
+            pendingStartSettled = pendingStart.then(() => { }, () => { });
+            await Promise.resolve();
+
+            session.stop(new Error("manual stop during in-flight createWebSocket"));
+            await vi.advanceTimersByTimeAsync(50);
+
+            await expect(pendingStart).rejects.toThrow("manual stop during in-flight createWebSocket");
+        } finally {
+            await stopSessionUsingFakeTimers(session, pendingStartSettled);
+        }
     });
 
     it("auto-starts and can call getRPC() from onOpen without an explicit initial getRPC()", async () => {
@@ -1012,7 +1050,7 @@ describe("ReconnectingWebSocketRpcSession", () => {
     });
 
     it("resets retry backoff after a manual stop/start", async () => {
-        vi.useFakeTimers();
+        vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout", "performance"] });
         let firstStart: Promise<void> | undefined;
         let secondStart: Promise<void> | undefined;
         let attempts = 0;
@@ -1052,10 +1090,146 @@ describe("ReconnectingWebSocketRpcSession", () => {
             await vi.advanceTimersByTimeAsync(100);
             expect(attempts).toBe(5);
         } finally {
-            session.stop(new Error("end test"));
-            if (firstStart) await firstStart;
-            if (secondStart) await secondStart;
-            vi.useRealTimers();
+            await stopSessionUsingFakeTimers(session, firstStart, secondStart);
+        }
+    });
+
+    it("waits only the remaining delay after a quick failed attempt", async () => {
+        vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+        let pendingStart: Promise<void> | undefined;
+        let attempts = 0;
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
+            createWebSocket: () => {
+                attempts++;
+                return new Promise<WebSocket>((_resolve, reject) => {
+                    setTimeout(() => reject(new Error("quick failure")), 40);
+                });
+            },
+            reconnectOptions: { delayMs: 100, maxDelayMs: 100, backoffFactor: 1 },
+        });
+
+        const trackStart = () => session.start().then(
+            () => { throw new Error("start() unexpectedly resolved"); },
+            () => { },
+        );
+
+        try {
+            session.stop(new Error("pause auto-start"));
+            pendingStart = trackStart();
+            await Promise.resolve();
+            expect(attempts).toBe(1);
+
+            await vi.advanceTimersByTimeAsync(40);
+            expect(attempts).toBe(1);
+
+            await vi.advanceTimersByTimeAsync(59);
+            expect(attempts).toBe(1);
+
+            await vi.advanceTimersByTimeAsync(1);
+            expect(attempts).toBe(2);
+        } finally {
+            await stopSessionUsingFakeTimers(session, pendingStart);
+        }
+    });
+
+    it("does not add extra retry delay when an attempt fails after the delay window", async () => {
+        vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+        let pendingStart: Promise<void> | undefined;
+        let attempts = 0;
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
+            createWebSocket: () => {
+                attempts++;
+                return new Promise<WebSocket>((_resolve, reject) => {
+                    setTimeout(() => reject(new Error("slow failure")), 150);
+                });
+            },
+            reconnectOptions: { delayMs: 100, maxDelayMs: 100, backoffFactor: 1 },
+        });
+
+        const trackStart = () => session.start().then(
+            () => { throw new Error("start() unexpectedly resolved"); },
+            () => { },
+        );
+
+        try {
+            session.stop(new Error("pause auto-start"));
+            pendingStart = trackStart();
+            await Promise.resolve();
+            expect(attempts).toBe(1);
+
+            await vi.advanceTimersByTimeAsync(149);
+            expect(attempts).toBe(1);
+
+            await vi.advanceTimersByTimeAsync(1);
+            expect(attempts).toBe(2);
+        } finally {
+            await stopSessionUsingFakeTimers(session, pendingStart);
+        }
+    });
+
+    it("uses Date-based elapsed time for retry delay when system time jumps", async () => {
+        vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+        let pendingStart: Promise<void> | undefined;
+        let attempts = 0;
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
+            createWebSocket: () => {
+                attempts++;
+                return new Promise<WebSocket>((_resolve, reject) => {
+                    setTimeout(() => reject(new Error("quick failure")), 40);
+                });
+            },
+            reconnectOptions: { delayMs: 100, maxDelayMs: 100, backoffFactor: 1 },
+        });
+
+        const trackStart = () => session.start().then(
+            () => { throw new Error("start() unexpectedly resolved"); },
+            () => { },
+        );
+
+        try {
+            session.stop(new Error("pause auto-start"));
+            pendingStart = trackStart();
+            await Promise.resolve();
+            expect(attempts).toBe(1);
+
+            await vi.advanceTimersByTimeAsync(20);
+            vi.setSystemTime(Date.now() + 60_000);
+
+            await vi.advanceTimersByTimeAsync(20);
+            expect(attempts).toBe(2);
+
+            await vi.advanceTimersByTimeAsync(59);
+            expect(attempts).toBe(2);
+
+            await vi.advanceTimersByTimeAsync(1);
+            expect(attempts).toBe(2);
+        } finally {
+            await stopSessionUsingFakeTimers(session, pendingStart);
+        }
+    });
+
+    it("waits before reconnecting when a connection drops immediately after opening", async () => {
+        firstConnectionForcedCloseDelayMs = 0;
+        const closeEvents: ReconnectingWebSocketRpcCloseEvent[] = [];
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
+            createWebSocket: () => createTestWebSocket(),
+            reconnectOptions: { delayMs: 500, maxDelayMs: 500 },
+        });
+        session.onClose(event => {
+            closeEvents.push(event);
+        });
+
+        try {
+            await waitFor(() => acceptedConnectionCount >= 1);
+            await waitFor(() => closeEvents.length >= 1);
+            expect(closeEvents[0].wasConnected).toBe(true);
+
+            await new Promise<void>(resolve => setTimeout(resolve, 120));
+            expect(acceptedConnectionCount).toBe(1);
+
+            await waitFor(() => acceptedConnectionCount >= 2, 1500);
+        } finally {
+            session.stop();
         }
     });
 
@@ -1086,6 +1260,39 @@ describe("ReconnectingWebSocketRpcSession", () => {
             await new Promise<void>(resolve => setTimeout(resolve, 60));
             expect(openConnectionIds).toStrictEqual([1]);
             expect(closeEvents.some(event => !event.intentional && event.wasConnected)).toBe(true);
+        } finally {
+            session.stop();
+        }
+    });
+
+    it("does not throttle manual reconnect after disconnect when reconnect=false", async () => {
+        const closeEvents: ReconnectingWebSocketRpcCloseEvent[] = [];
+        const session = new ReconnectingWebSocketRpcSession<TestRpcApi>({
+            createWebSocket: () => createTestWebSocket(),
+            reconnectOptions: { enabled: false, delayMs: 1000, maxDelayMs: 1000 },
+        });
+        session.onClose(event => {
+            closeEvents.push(event);
+        });
+
+        try {
+            const rpc = await session.getRPC();
+            expect(await rpc.square(4)).toBe(16);
+            expect(acceptedConnectionCount).toBe(1);
+
+            for (const socket of sockets) {
+                socket.close(1012, "forced disconnect for manual reconnect");
+            }
+
+            await waitFor(() => closeEvents.length >= 1);
+            const reconnectStartedAtMs = Date.now();
+            const restart = session.start();
+
+            await waitFor(() => acceptedConnectionCount >= 2, 500);
+            expect(Date.now() - reconnectStartedAtMs).toBeLessThan(500);
+
+            const restartedRpc = await restart;
+            expect(await restartedRpc.square(5)).toBe(25);
         } finally {
             session.stop();
         }
