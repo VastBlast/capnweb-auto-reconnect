@@ -1,6 +1,6 @@
 {
   "name": "capnweb-auto-reconnect",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Reconnecting WebSocket RPC session support for capnweb.",
   "scripts": {
     "build": "tsdown",
@@ -24,16 +24,16 @@
   "devDependencies": {
     "@types/ws": "^8.18.1",
     "@typescript/native-preview": "^7.0.0-dev.20260216.1",
-    "capnweb": "^0.5.0",
+    "capnweb": "^0.6.1",
     "oxlint": "^1.48.0",
-    "oxlint-tsgolint": "^0.14.0",
-    "tsdown": "^0.20.3",
+    "oxlint-tsgolint": "^0.16.0",
+    "tsdown": "^0.21.2",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18",
     "ws": "^8.19.0"
   },
   "peerDependencies": {
-    "capnweb": "^0.5.0"
+    "capnweb": "^0.6.1"
   },
   "files": [
     "dist"

@@ -3,7 +3,9 @@ import { defineConfig } from 'tsdown'
 export default defineConfig({
     entry: ['src/index.ts'],
     format: ['esm', 'cjs'],
-    external: ['cloudflare:workers'],
+    deps: {
+        neverBundle: ['cloudflare:workers']
+    },
     dts: true,
     sourcemap: true,
     clean: true,
